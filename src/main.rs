@@ -1,11 +1,45 @@
-use clap::{value_parser, Arg};
+use clap::builder::PossibleValue;
+use clap::{value_parser, Arg, ArgAction};
 use config::{Config, Environment, File};
 use directories::UserDirs;
 use log::{debug, error, info, trace, warn, LevelFilter};
-use serde::Deserialize;
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
-#[derive(Debug, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum SettingsOutputFormat {
+    JSON,
+    TOML,
+    YAML,
+}
+
+impl Default for &SettingsOutputFormat {
+    fn default() -> Self {
+        &SettingsOutputFormat::TOML
+    }
+}
+
+impl clap::ValueEnum for SettingsOutputFormat {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[
+            SettingsOutputFormat::JSON,
+            SettingsOutputFormat::TOML,
+            SettingsOutputFormat::YAML,
+        ]
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        Some(match self {
+            SettingsOutputFormat::JSON => PossibleValue::new("json").help("JSON"),
+            SettingsOutputFormat::TOML => PossibleValue::new("toml").help("TOML"),
+            SettingsOutputFormat::YAML => PossibleValue::new("yaml").help("YAML"),
+        })
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct Settings {
     verbose: String,
     config_path: PathBuf,
@@ -74,6 +108,37 @@ Argument values are processed in the following order, using the last processed v
   3. explicit argument (e.g. --config <path>)",
             ABOUT
         ))
+        .subcommand(
+            clap::Command::new("config")
+                .about("View the present config or generate a default config.")
+                .arg(
+                    Arg::new("default")
+                        .short('d')
+                        .long("default")
+                        .action(ArgAction::SetTrue)
+                        .help("Generate a default config, rather than present environment values"),
+                )
+                .arg(
+                    Arg::new("force")
+                        .long("force")
+                        .action(ArgAction::SetTrue)
+                        .help("Overwrite any existing file"),
+                )
+                .arg(
+                    Arg::new("output")
+                        .short('o')
+                        .long("output")
+                        .help("Write the config output to a file")
+                        .value_parser(value_parser!(PathBuf)),
+                )
+                .arg(
+                    Arg::new("format")
+                        .short('f')
+                        .long("format")
+                        .help("Specify output format for the config")
+                        .value_parser(value_parser!(SettingsOutputFormat)),
+                ),
+        )
         .arg(
             Arg::new("config")
                 .short('c')
@@ -123,4 +188,61 @@ Argument values are processed in the following order, using the last processed v
     info!("{}", settings);
     debug!("testing");
     trace!("testing");
+
+    match matches.subcommand() {
+        Some(("config", sub_matches)) => {
+            let mut out = match sub_matches.get_one::<PathBuf>("output") {
+                Some(file) => {
+                    if Path::new(file).exists() {
+                        if sub_matches.get_flag("force") {
+                            fs::remove_file(file).unwrap();
+                        } else {
+                            error!("File already exists: {}", file.display());
+                            std::process::exit(1);
+                        }
+                    }
+
+                    let file = OpenOptions::new()
+                        .create_new(true)
+                        .write(true)
+                        .append(true)
+                        .open(file)
+                        .unwrap();
+                    Box::new(file) as Box<dyn Write>
+                }
+                None => Box::new(std::io::stdout()) as Box<dyn Write>,
+            };
+            write_settings(
+                &mut out,
+                &settings,
+                sub_matches
+                    .get_one::<SettingsOutputFormat>("format")
+                    .unwrap_or_default(),
+            );
+        }
+        _ => {}
+    }
+}
+
+fn write_settings(out: &mut dyn Write, settings: &Settings, fmt: &SettingsOutputFormat) {
+    match fmt {
+        SettingsOutputFormat::JSON => writeln!(
+            out,
+            "{}",
+            serde_json::to_string_pretty(&settings).expect("Failed to serialize settings to JSON")
+        )
+        .expect("Failed to write config to stdout"),
+        SettingsOutputFormat::TOML => writeln!(
+            out,
+            "{}",
+            toml::to_string_pretty(&settings).expect("Failed to serialize settings to TOML")
+        )
+        .expect("Failed to write config to stdout"),
+        SettingsOutputFormat::YAML => writeln!(
+            out,
+            "{}",
+            serde_yaml::to_string(&settings).expect("Failed to serialize settings to YAML")
+        )
+        .expect("Failed to write config to stdout"),
+    }
 }
