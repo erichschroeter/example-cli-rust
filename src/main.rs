@@ -73,6 +73,29 @@ impl From<Config> for Settings {
     }
 }
 
+fn write_settings(out: &mut dyn Write, settings: &Settings, fmt: &SettingsOutputFormat) {
+    match fmt {
+        SettingsOutputFormat::JSON => writeln!(
+            out,
+            "{}",
+            serde_json::to_string_pretty(&settings).expect("Failed to serialize settings to JSON")
+        )
+        .expect("Failed to write config to stdout"),
+        SettingsOutputFormat::TOML => writeln!(
+            out,
+            "{}",
+            toml::to_string_pretty(&settings).expect("Failed to serialize settings to TOML")
+        )
+        .expect("Failed to write config to stdout"),
+        SettingsOutputFormat::YAML => writeln!(
+            out,
+            "{}",
+            serde_yaml::to_string(&settings).expect("Failed to serialize settings to YAML")
+        )
+        .expect("Failed to write config to stdout"),
+    }
+}
+
 fn default_config_path() -> PathBuf {
     let user_dirs = UserDirs::new().unwrap();
     let mut path = PathBuf::from(user_dirs.home_dir());
@@ -183,6 +206,14 @@ Argument values are processed in the following order, using the last processed v
 
     setup_logging(&settings.verbose);
 
+    // Only check for config file to exist if not the default config.
+    if settings.config_path != Settings::default().config_path && !settings.config_path.exists() {
+        error!("Config not found: {}", settings.config_path.display());
+        std::process::exit(1);
+    } else {
+        
+    }
+
     error!("testing");
     warn!("testing");
     info!("{}", settings);
@@ -221,28 +252,5 @@ Argument values are processed in the following order, using the last processed v
             );
         }
         _ => {}
-    }
-}
-
-fn write_settings(out: &mut dyn Write, settings: &Settings, fmt: &SettingsOutputFormat) {
-    match fmt {
-        SettingsOutputFormat::JSON => writeln!(
-            out,
-            "{}",
-            serde_json::to_string_pretty(&settings).expect("Failed to serialize settings to JSON")
-        )
-        .expect("Failed to write config to stdout"),
-        SettingsOutputFormat::TOML => writeln!(
-            out,
-            "{}",
-            toml::to_string_pretty(&settings).expect("Failed to serialize settings to TOML")
-        )
-        .expect("Failed to write config to stdout"),
-        SettingsOutputFormat::YAML => writeln!(
-            out,
-            "{}",
-            serde_yaml::to_string(&settings).expect("Failed to serialize settings to YAML")
-        )
-        .expect("Failed to write config to stdout"),
     }
 }
